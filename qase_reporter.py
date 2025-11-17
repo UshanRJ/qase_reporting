@@ -79,15 +79,17 @@ class QaseReporter:
             raise
     
     def get_test_runs(self, limit: int = 100, status: Optional[str] = None, 
-                     tags: Optional[List[str]] = None, exclude_tags: Optional[List[str]] = None) -> List[Dict]:
+                     tags: Optional[List[str]] = None, exclude_tags: Optional[List[str]] = None,
+                     milestones: Optional[List[str]] = None) -> List[Dict]:
         """
-        Fetch test runs from Qase with optional tag filtering
+        Fetch test runs from Qase with optional tag and milestone filtering
         
         Args:
             limit: Maximum number of runs to fetch
             status: Filter by status (active, complete, abort)
             tags: List of tags to filter BY (include only runs with these tags)
             exclude_tags: List of tags to exclude (exclude runs with these tags)
+            milestones: List of milestone titles to filter by
             
         Returns:
             List of test run data
@@ -95,10 +97,16 @@ class QaseReporter:
         if tags and exclude_tags:
             self.console.print("[yellow]⚠  Both tags and exclude_tags specified. Using tags (include) only.[/yellow]")
         
+        filter_info = []
         if tags:
-            self.console.print(f"[cyan]📊 Fetching test runs with tags: {tags}...[/cyan]")
+            filter_info.append(f"tags: {tags}")
         elif exclude_tags:
-            self.console.print(f"[cyan]📊 Fetching test runs excluding tags: {exclude_tags}...[/cyan]")
+            filter_info.append(f"excluding tags: {exclude_tags}")
+        if milestones:
+            filter_info.append(f"milestones: {milestones}")
+        
+        if filter_info:
+            self.console.print(f"[cyan]📊 Fetching test runs with {', '.join(filter_info)}...[/cyan]")
         else:
             self.console.print("[cyan]📊 Fetching test runs...[/cyan]")
         
@@ -113,16 +121,22 @@ class QaseReporter:
             
             if response.get("status"):
                 runs = response.get("result", {}).get("entities", [])
+                original_count = len(runs)
                 
                 # Apply tag filtering if specified
                 if tags:
-                    original_count = len(runs)
                     runs = [run for run in runs if self._run_has_tags(run, tags)]
-                    self.console.print(f"[dim]Filtered: {original_count} → {len(runs)} runs (matched tags: {tags})[/dim]")
-                elif exclude_tags:
+                    self.console.print(f"[dim]Tag filter: {original_count} → {len(runs)} runs (matched tags: {tags})[/dim]")
                     original_count = len(runs)
+                elif exclude_tags:
                     runs = [run for run in runs if not self._run_has_any_tag(run, exclude_tags)]
-                    self.console.print(f"[dim]Filtered: {original_count} → {len(runs)} runs (excluded tags: {exclude_tags})[/dim]")
+                    self.console.print(f"[dim]Tag filter: {original_count} → {len(runs)} runs (excluded tags: {exclude_tags})[/dim]")
+                    original_count = len(runs)
+                
+                # Apply milestone filtering if specified
+                if milestones:
+                    runs = [run for run in runs if self._run_has_milestones(run, milestones)]
+                    self.console.print(f"[dim]Milestone filter: {original_count} → {len(runs)} runs (matched milestones: {milestones})[/dim]")
                 
                 self.console.print(f"[green]✓ Found {len(runs)} test runs[/green]")
                 return runs
@@ -186,6 +200,55 @@ class QaseReporter:
         # Check if any exclude tag is present
         exclude_tags_lower = [tag.lower() for tag in exclude_tags]
         return any(tag in run_tag_names for tag in exclude_tags_lower)
+    
+    def get_milestones(self) -> List[Dict]:
+        """
+        Fetch all milestones from Qase project
+        
+        Returns:
+            List of milestone dictionaries with 'id' and 'title' keys
+        """
+        self.console.print("[cyan]🎯 Fetching milestones...[/cyan]")
+        
+        try:
+            response = self._make_request(f"milestone/{self.project_code}", {"limit": 100})
+            
+            if response.get("status"):
+                milestones = response.get("result", {}).get("entities", [])
+                self.console.print(f"[green]✓ Found {len(milestones)} milestones[/green]")
+                return milestones
+            else:
+                self.console.print("[red]Failed to fetch milestones[/red]")
+                return []
+        except Exception as e:
+            self.console.print(f"[red]Error fetching milestones: {e}[/red]")
+            return []
+    
+    def _run_has_milestones(self, run: Dict, required_milestones: List[str]) -> bool:
+        """
+        Check if a test run belongs to any of the required milestones
+        
+        Args:
+            run: Test run dictionary
+            required_milestones: List of milestone titles to check for
+            
+        Returns:
+            True if run belongs to any required milestone
+        """
+        run_milestone = run.get('milestone', {})
+        if not run_milestone:
+            return False
+        
+        # Get milestone title
+        milestone_title = ''
+        if isinstance(run_milestone, dict):
+            milestone_title = run_milestone.get('title', '').lower()
+        else:
+            milestone_title = str(run_milestone).lower()
+        
+        # Check if milestone matches any required milestone
+        required_milestones_lower = [ms.lower() for ms in required_milestones]
+        return milestone_title in required_milestones_lower
     
     def get_test_results_by_runs(self, run_ids: List[int], batch_size: int = 50) -> List[Dict]:
         """

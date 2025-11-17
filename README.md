@@ -11,6 +11,7 @@ A modern, interactive web interface for analyzing Qase test run results with rea
 - 🚀 **Interactive Web UI** - Modern, user-friendly interface built with Streamlit
 - 📊 **Real-time Data Fetching** - Fetch test runs and results directly from Qase API
 - 🏷️ **Tag Filtering** - Include or exclude test runs by tags
+- 🎯 **Milestone Filtering** - Filter test runs by sprint/release milestones
 - 📈 **Summary Metrics** - Visual dashboard with key performance indicators
 - 🔍 **Search & Filter** - Quickly find specific test runs
 - 📥 **Multiple Export Formats** - Export to Excel, CSV, or save to local folder
@@ -115,6 +116,10 @@ The application will automatically open in your default browser at `http://local
   - Enable/disable tag filtering
   - Choose Include or Exclude mode
   - Enter comma-separated tags
+- **Milestone Filtering**:
+  - Enable/disable milestone filtering
+  - Multi-select from available milestones
+  - Works alongside tag filtering
 - **Clear Cache**: Reset all loaded data
 
 ### Tag Filtering Examples
@@ -130,6 +135,22 @@ Only fetches test runs tagged with "regression" OR "smoke"
 wip, draft
 ```
 Fetches all test runs EXCEPT those tagged with "wip" OR "draft"
+
+### Milestone Filtering Examples
+
+**Filter by single milestone:**
+- Select "IBNU Sprint 60 - IS Feature" from dropdown
+- Retrieves only test runs associated with that milestone
+
+**Filter by multiple milestones:**
+- Select "IBNU Sprint 60 - IS Feature" AND "IBNU Sprint 60 - IS+ PowerBI"
+- Retrieves test runs from any of the selected milestones
+
+**Combined filtering:**
+- Enable both Tag Filtering (Include: "regression") and Milestone Filtering (Sprint 60)
+- Retrieves only regression test runs from Sprint 60
+
+> 📖 For detailed milestone filtering documentation, see [MILESTONE_FILTERING.md](MILESTONE_FILTERING.md)
 
 ## 📁 Project Structure
 

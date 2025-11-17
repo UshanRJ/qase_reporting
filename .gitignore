@@ -1,6 +1,11 @@
-# Environment
+# Environment (CRITICAL - DO NOT COMMIT)
 venv/
 .env
+.env.local
+.env.*.local
+
+# Streamlit Secrets (CRITICAL - DO NOT COMMIT)
+.streamlit/secrets.toml
 
 # Python
 __pycache__/
@@ -8,14 +13,42 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
 
 # Exports
 exports/
 *.xlsx
 *.csv
+*.png
+*.pdf
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+.DS_Store
+
+# Logs
+*.log
+
+# Backup files
+*.bak
+*.backup
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Database (if you add one later)
+*.db
+*.sqlite
+*.sqlite3
