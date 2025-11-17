@@ -38,6 +38,8 @@ def init_session_state():
         st.session_state.reporter = None
     if 'execution_logs' not in st.session_state:
         st.session_state.execution_logs = []
+    if 'report_completed' not in st.session_state:
+        st.session_state.report_completed = False
 
 
 def add_log(message: str, level: str = "info"):
@@ -318,18 +320,86 @@ def main():
         if use_tag_filter:
             filter_mode = st.radio("Filter Mode", ["Include Tags", "Exclude Tags"])
             
+            # Initialize session state for tags if not exists
+            if 'include_tags_list' not in st.session_state:
+                st.session_state.include_tags_list = []
+            if 'exclude_tags_list' not in st.session_state:
+                st.session_state.exclude_tags_list = []
+            
             if filter_mode == "Include Tags":
-                tags_input = st.text_input("Tags to Include (comma-separated)", 
-                                          placeholder="regression, smoke")
-                if tags_input:
-                    include_tags = [tag.strip() for tag in tags_input.split(",")]
-                    st.success(f"Will include: {include_tags}")
+                # Use form for auto-submit on Enter
+                with st.form(key="include_tags_form", clear_on_submit=True, enter_to_submit=True, border=False):
+                    tags_input = st.text_input(
+                        "Tags to Include (comma-separated)", 
+                        placeholder="regression, smoke",
+                        help="Enter tags and press Enter to add them",
+                        label_visibility="visible"
+                    )
+                    submitted = st.form_submit_button("➕ Add Tags", use_container_width=True)
+                    
+                    if submitted and tags_input:
+                        new_tags = [tag.strip() for tag in tags_input.split(",") if tag.strip()]
+                        # Add to session state list, avoiding duplicates
+                        for tag in new_tags:
+                            if tag not in st.session_state.include_tags_list:
+                                st.session_state.include_tags_list.append(tag)
+                
+                # Display current tags
+                if st.session_state.include_tags_list:
+                    include_tags = st.session_state.include_tags_list
+                    
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.success(f"✓ Include tags: {', '.join(include_tags)}")
+                    with col2:
+                        if st.button("🗑️", key="clear_include_all"):
+                            st.session_state.include_tags_list = []
+                            st.rerun()
+                    
+                    # Show individual tags with remove buttons
+                    cols = st.columns(min(len(include_tags), 4))
+                    for idx, tag in enumerate(include_tags):
+                        with cols[idx % 4]:
+                            if st.button(f"❌ {tag}", key=f"remove_inc_{idx}"):
+                                st.session_state.include_tags_list.remove(tag)
+                                st.rerun()
             else:
-                tags_input = st.text_input("Tags to Exclude (comma-separated)", 
-                                          placeholder="wip, draft")
-                if tags_input:
-                    exclude_tags = [tag.strip() for tag in tags_input.split(",")]
-                    st.warning(f"Will exclude: {exclude_tags}")
+                # Use form for auto-submit on Enter
+                with st.form(key="exclude_tags_form", clear_on_submit=True, enter_to_submit=True, border=False):
+                    tags_input = st.text_input(
+                        "Tags to Exclude (comma-separated)", 
+                        placeholder="wip, draft",
+                        help="Enter tags and press Enter to add them",
+                        label_visibility="visible"
+                    )
+                    submitted = st.form_submit_button("➕ Add Tags", use_container_width=True)
+                    
+                    if submitted and tags_input:
+                        new_tags = [tag.strip() for tag in tags_input.split(",") if tag.strip()]
+                        # Add to session state list, avoiding duplicates
+                        for tag in new_tags:
+                            if tag not in st.session_state.exclude_tags_list:
+                                st.session_state.exclude_tags_list.append(tag)
+                
+                # Display current tags
+                if st.session_state.exclude_tags_list:
+                    exclude_tags = st.session_state.exclude_tags_list
+                    
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.warning(f"⚠ Exclude tags: {', '.join(exclude_tags)}")
+                    with col2:
+                        if st.button("🗑️", key="clear_exclude_all"):
+                            st.session_state.exclude_tags_list = []
+                            st.rerun()
+                    
+                    # Show individual tags with remove buttons
+                    cols = st.columns(min(len(exclude_tags), 4))
+                    for idx, tag in enumerate(exclude_tags):
+                        with cols[idx % 4]:
+                            if st.button(f"❌ {tag}", key=f"remove_exc_{idx}"):
+                                st.session_state.exclude_tags_list.remove(tag)
+                                st.rerun()
         
         st.divider()
         
@@ -379,6 +449,9 @@ def main():
             st.session_state.test_results = None
             st.session_state.aggregated_df = None
             st.session_state.execution_logs = []
+            st.session_state.report_completed = False
+            st.session_state.include_tags_list = []
+            st.session_state.exclude_tags_list = []
             if 'milestones' in st.session_state:
                 del st.session_state.milestones
             if 'tag_summary' in st.session_state:
@@ -406,8 +479,13 @@ def main():
             """)
         
         with col2:
-            if st.button("▶️ Run Report", type="primary", use_container_width=True):
+            # Disable button if report already completed
+            button_disabled = st.session_state.report_completed
+            button_label = "✅ Report Complete" if button_disabled else "▶️ Run Report"
+            
+            if st.button(button_label, type="primary", use_container_width=True, disabled=button_disabled):
                 st.session_state.execution_logs = []  # Clear previous logs
+                st.session_state.report_completed = False  # Reset completion flag
                 add_log("Starting report generation...", "info")
                 
                 # Initialize reporter
@@ -433,9 +511,15 @@ def main():
                 # Aggregate and display
                 aggregated_df = aggregate_and_display_results(reporter, test_results, test_runs)
                 if aggregated_df is not None:
+                    st.session_state.report_completed = True  # Mark as completed
                     add_log("✅ Report generation completed successfully!", "success")
-                    st.success("✅ Report generated successfully! Check the Results tab.")
+                    st.success("✅ Report generated successfully! Go to the **Results** tab to view and export data.")
                     st.balloons()
+                    st.info("👉 Click on the **Results** tab above to see your data and export options.")
+            
+            # Show helper text when button is disabled
+            if button_disabled:
+                st.caption("💡 Report already generated. Go to Results tab or Clear Cache to run again.")
         
         st.divider()
         
@@ -485,17 +569,30 @@ def main():
             if search_term:
                 filtered_df = df[df['Test Run'].str.contains(search_term, case=False, na=False)]
             else:
-                filtered_df = df
+                filtered_df = df.copy()
+            
+            # Create a copy and ensure no markdown escaping
+            display_df = filtered_df.copy()
             
             # Display dataframe with styling
+            # Note: Using column_order to ensure proper display
             st.dataframe(
-                filtered_df,
+                display_df,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "Test Run": st.column_config.TextColumn("Test Run", width="large"),
+                    "Test Run": st.column_config.TextColumn(
+                        "Test Run", 
+                        width="large",
+                        help="Test run title from Qase"
+                    ),
+                    "Description": st.column_config.TextColumn(
+                        "Task",
+                        width="medium"
+                    ),
                     "Passed": st.column_config.NumberColumn("Passed", format="%d", help="Tests passed"),
                     "Failed": st.column_config.NumberColumn("Failed", format="%d", help="Tests failed"),
+                    "Blocked": st.column_config.NumberColumn("Blocked", format="%d", help="Tests blocked"),
                     "Total": st.column_config.NumberColumn("Total", format="%d", help="Total tests")
                 }
             )
@@ -539,15 +636,25 @@ def main():
                         export_dir = Config.EXPORT_DIR or "exports"
                         os.makedirs(export_dir, exist_ok=True)
 
+                        # Get absolute path for better clarity
+                        abs_export_dir = os.path.abspath(export_dir)
+                        
                         excel_filename = os.path.join(
                             str(export_dir),
                             f"qase_results_{Config.PROJECT_CODE}_{timestamp}.xlsx"
                         )
+                        
+                        abs_filename = os.path.abspath(excel_filename)
+                        
                         df.to_excel(excel_filename, index=False, sheet_name='Test Run Results', engine='openpyxl')
-                        st.success(f"✅ Saved to: {excel_filename}")
-                        add_log(f"Exported to {excel_filename}", "success")
+                        
+                        st.success(f"✅ File saved successfully!")
+                        st.info(f"📁 **Location:** `{abs_filename}`")
+                        st.caption(f"💡 The file is saved on the server/local machine, not downloaded to your browser.")
+                        add_log(f"Exported to {abs_filename}", "success")
                     except Exception as e:
                         st.error(f"❌ Error saving file: {e}")
+                        add_log(f"Export failed: {e}", "error")
                         add_log(f"Export failed: {e}", "error")
             
         else:
