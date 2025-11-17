@@ -14,6 +14,7 @@ import traceback
 
 from qase_reporter import QaseReporter
 from config import Config
+from auth import check_multi_user_password
 
 
 # Page configuration
@@ -277,6 +278,11 @@ def export_to_csv(df: pd.DataFrame) -> str:
 def main():
     """Main application"""
     init_session_state()
+    
+    # Authentication check - MUST be authenticated to continue
+    if not check_multi_user_password():
+        st.stop()  # Stop execution if not authenticated
+        return
     
     # Header
     st.title("📊 Qase Test Run Reporter")
@@ -561,7 +567,7 @@ def main():
         st.markdown("""
         ### 📊 Features
         - ✅ Fetch test runs from Qase API
-        - 🏷️ Filter by tags (include/exclude)
+        - 🏷️ Filter by tags (include/exclude) or milestones
         - 📊 Real-time results aggregation
         - 📈 Summary metrics and statistics
         - 📥 Export to Excel and CSV
@@ -588,7 +594,7 @@ def main():
         - [Streamlit Documentation](https://docs.streamlit.io/)
         
         ### 📦 Version
-        - Application: v1.0.0
+        - Application: v2.0.0
         - Project: {project}
         """.format(project=Config.PROJECT_CODE))
         
