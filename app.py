@@ -9,7 +9,7 @@ import pandas as pd
 from datetime import datetime
 import os
 import io
-from typing import Optional, List
+from typing import Optional, List, cast
 import traceback
 
 from qase_reporter import QaseReporter
@@ -89,9 +89,19 @@ def validate_config() -> bool:
 def initialize_reporter() -> Optional[QaseReporter]:
     """Initialize the Qase Reporter"""
     try:
+        # Read config values and ensure they are present
+        token = Config.QASE_API_TOKEN
+        project = Config.PROJECT_CODE
+
+        if not token or not project:
+            add_log("✗ Missing API token or project code in configuration", "error")
+            st.error("Missing API token or project code in configuration")
+            return None
+
+        # Cast to str for the type-checker now that we validated presence
         reporter = QaseReporter(
-            api_token=Config.QASE_API_TOKEN,
-            project_code=Config.PROJECT_CODE
+            api_token=cast(str, token),
+            project_code=cast(str, project)
         )
         add_log(f"✓ Reporter initialized for project: {Config.PROJECT_CODE}", "success")
         return reporter
@@ -103,7 +113,8 @@ def initialize_reporter() -> Optional[QaseReporter]:
 
 def fetch_test_runs(reporter: QaseReporter, limit: int, 
                     include_tags: Optional[List[str]] = None,
-                    exclude_tags: Optional[List[str]] = None):
+                    exclude_tags: Optional[List[str]] = None,
+                    milestones: Optional[List[str]] = None):
     """Fetch test runs with progress indication"""
     try:
         add_log(f"Fetching test runs (limit: {limit})...", "info")
@@ -112,7 +123,8 @@ def fetch_test_runs(reporter: QaseReporter, limit: int,
             test_runs = reporter.get_test_runs(
                 limit=limit,
                 tags=include_tags,
-                exclude_tags=exclude_tags
+                exclude_tags=exclude_tags,
+                milestones=milestones
             )
         
         if test_runs:
@@ -121,14 +133,25 @@ def fetch_test_runs(reporter: QaseReporter, limit: int,
             
             # Display tag summary
             tag_summary = {}
+            milestone_summary = {}
             for run in test_runs:
+                # Process tags
                 tags = run.get('tags', [])
                 for tag in tags:
                     tag_name = tag.get('title', str(tag)) if isinstance(tag, dict) else str(tag)
                     tag_summary[tag_name] = tag_summary.get(tag_name, 0) + 1
+                
+                # Process milestones
+                milestone = run.get('milestone', {})
+                if milestone:
+                    milestone_name = milestone.get('title', str(milestone)) if isinstance(milestone, dict) else str(milestone)
+                    milestone_summary[milestone_name] = milestone_summary.get(milestone_name, 0) + 1
             
             if tag_summary:
                 st.session_state.tag_summary = tag_summary
+            
+            if milestone_summary:
+                st.session_state.milestone_summary = milestone_summary
             
             return test_runs
         else:
@@ -304,12 +327,58 @@ def main():
         
         st.divider()
         
+        # Milestone Filtering
+        st.subheader("🎯 Milestone Filtering")
+        use_milestone_filter = st.checkbox("Enable Milestone Filtering", value=False)
+        
+        selected_milestones = None
+        
+        if use_milestone_filter:
+            # Fetch milestones if not already cached
+            if 'milestones' not in st.session_state:
+                with st.spinner("🔄 Fetching milestones from Qase API..."):
+                    try:
+                        reporter = initialize_reporter()
+                        if reporter:
+                            milestones = reporter.get_milestones()
+                            st.session_state.milestones = milestones
+                    except Exception as e:
+                        st.error(f"Error fetching milestones: {e}")
+                        st.session_state.milestones = []
+            
+            milestones = st.session_state.get('milestones', [])
+            
+            if milestones:
+                # Extract milestone titles for dropdown
+                milestone_options = [m.get('title', f"Milestone {m.get('id', 'Unknown')}") 
+                                    for m in milestones]
+                
+                selected_milestones = st.multiselect(
+                    "Select Milestones",
+                    options=milestone_options,
+                    placeholder="Choose one or more milestones...",
+                    help="Filter test runs by the selected milestones"
+                )
+                
+                if selected_milestones:
+                    st.info(f"📍 Selected: {len(selected_milestones)} milestone(s)")
+            else:
+                st.warning("No milestones found in the project")
+        
+        st.divider()
+        
         # Clear cache button
         if st.button("🗑️ Clear Cache", use_container_width=True):
             st.session_state.test_runs = None
             st.session_state.test_results = None
             st.session_state.aggregated_df = None
             st.session_state.execution_logs = []
+            if 'milestones' in st.session_state:
+                del st.session_state.milestones
+            if 'tag_summary' in st.session_state:
+                del st.session_state.tag_summary
+            if 'milestone_summary' in st.session_state:
+                del st.session_state.milestone_summary
             add_log("Cache cleared", "info")
             st.rerun()
     
@@ -325,7 +394,7 @@ def main():
             st.markdown("""
             Click the button below to fetch test runs and results from Qase.
             The process will:
-            1. 🔍 Fetch test runs (with optional tag filtering)
+            1. 🔍 Fetch test runs (with optional tag and milestone filtering)
             2. 📥 Retrieve test results for each run
             3. 📊 Aggregate and display results
             """)
@@ -343,7 +412,7 @@ def main():
                 st.session_state.reporter = reporter
                 
                 # Fetch test runs
-                test_runs = fetch_test_runs(reporter, limit, include_tags, exclude_tags)
+                test_runs = fetch_test_runs(reporter, limit, include_tags, exclude_tags, selected_milestones)
                 if not test_runs:
                     return
                 
@@ -375,6 +444,14 @@ def main():
                         for tag, count in sorted(st.session_state.tag_summary.items())
                     ])
                     st.dataframe(tag_df, use_container_width=True, hide_index=True)
+            
+            if hasattr(st.session_state, 'milestone_summary') and st.session_state.milestone_summary:
+                with st.expander("🎯 Milestones in Loaded Runs"):
+                    milestone_df = pd.DataFrame([
+                        {'Milestone': milestone, 'Count': count}
+                        for milestone, count in sorted(st.session_state.milestone_summary.items())
+                    ])
+                    st.dataframe(milestone_df, use_container_width=True, hide_index=True)
         
         if st.session_state.test_results:
             st.success(f"✓ {len(st.session_state.test_results)} test results loaded")
@@ -452,8 +529,12 @@ def main():
                 # Save to exports folder
                 if st.button("💾 Save to Exports Folder", use_container_width=True):
                     try:
+                        # Ensure EXPORT_DIR is a valid string and directory exists
+                        export_dir = Config.EXPORT_DIR or "exports"
+                        os.makedirs(export_dir, exist_ok=True)
+
                         excel_filename = os.path.join(
-                            Config.EXPORT_DIR,
+                            str(export_dir),
                             f"qase_results_{Config.PROJECT_CODE}_{timestamp}.xlsx"
                         )
                         df.to_excel(excel_filename, index=False, sheet_name='Test Run Results', engine='openpyxl')
