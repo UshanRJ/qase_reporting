@@ -14,6 +14,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from rich import box
 import time
 import sys
+import html
 
 
 class QaseReporter:
@@ -336,6 +337,14 @@ class QaseReporter:
             run_id = run['id']
             run_title = run.get('title', 'Unknown Run')
             run_description = run.get('description', 'No description')
+            
+            # Clean description: unescape HTML entities and remove extra escaping
+            if run_description and run_description != 'No description':
+                # Unescape HTML entities (e.g., &nbsp;, &amp;, etc.)
+                run_description = html.unescape(run_description)
+                # Remove any markdown/LaTeX escaping backslashes before special chars
+                run_description = run_description.replace('\\-', '-').replace('\\|', '|').replace('\\(', '(').replace('\\)', ')')
+            
             run_tags = run.get('tags', [])
             
             # Format tags for display
@@ -364,11 +373,14 @@ class QaseReporter:
         df['run_description'] = df['run_id'].map(lambda x: run_mapping.get(x, {}).get('description', 'No description'))
         df['run_tags'] = df['run_id'].map(lambda x: run_mapping.get(x, {}).get('tags', 'No tags'))
         
-        # Aggregate by run and status
-        aggregated = df.groupby(['run_id', 'run_title', 'run_description', 'run_tags', 'status']).size().unstack(fill_value=0)
+        # Aggregate by run and status (excluding description to prevent escaping)
+        aggregated = df.groupby(['run_id', 'run_title', 'run_tags', 'status']).size().unstack(fill_value=0)
         
         # Reset index
         aggregated = aggregated.reset_index()
+        
+        # Add description back from mapping (prevents escaping issues)
+        aggregated['run_description'] = aggregated['run_id'].map(lambda x: run_mapping.get(x, {}).get('description', 'No description'))
         
         # Calculate total
         status_columns = [col for col in aggregated.columns if col not in ['run_id', 'run_title', 'run_description', 'run_tags']]
