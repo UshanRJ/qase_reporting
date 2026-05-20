@@ -78,6 +78,53 @@ class QaseReporter:
         except requests.exceptions.RequestException as e:
             self.console.print(f"[red]Error making API request: {e}[/red]")
             raise
+
+    def _normalize_text(self, value: object) -> str:
+        """Normalize text for stable comparisons."""
+        if value is None:
+            return ""
+
+        return " ".join(str(value).split()).strip().lower()
+
+    def _extract_milestone_title(self, milestone: object) -> str:
+        """Extract a normalized milestone title from an API object or value."""
+        if isinstance(milestone, dict):
+            return self._normalize_text(
+                milestone.get("title") or milestone.get("name") or milestone.get("id")
+            )
+
+        return self._normalize_text(milestone)
+
+    def _run_sort_key(self, run: Dict) -> tuple:
+        """Sort runs from newest to oldest using the best timestamp available."""
+        candidate_fields = (
+            "created_at",
+            "createdAt",
+            "updated_at",
+            "updatedAt",
+            "start_time",
+            "startTime",
+            "end_time",
+            "closed_at",
+        )
+
+        for field in candidate_fields:
+            raw_value = run.get(field)
+            if not raw_value:
+                continue
+
+            if isinstance(raw_value, (int, float)):
+                return (1, float(raw_value), run.get("id", 0))
+
+            if isinstance(raw_value, str):
+                normalized_value = raw_value.strip().replace("Z", "+00:00")
+                try:
+                    parsed_value = datetime.fromisoformat(normalized_value)
+                    return (1, parsed_value.timestamp(), run.get("id", 0))
+                except ValueError:
+                    continue
+
+        return (0, float(run.get("id", 0)), 0)
     
     def get_test_runs(self, limit: int = 100, status: Optional[str] = None, 
                      tags: Optional[List[str]] = None, exclude_tags: Optional[List[str]] = None,
@@ -111,39 +158,61 @@ class QaseReporter:
         else:
             self.console.print("[cyan]📊 Fetching test runs...[/cyan]")
         
-        # Use a params dict that can accept mixed value types (ints and strings)
-        params: Dict[str, object] = {"limit": limit}
-        if status is not None:
-            # Qase API may accept status as an int code or string; keep original type but allow mixed types
-            params["status"] = status
-        
         try:
-            response = self._make_request(f"run/{self.project_code}", params)
-            
-            if response.get("status"):
-                runs = response.get("result", {}).get("entities", [])
+            page_size = min(max(limit, 1), 100)
+            offset = 0
+            all_runs: List[Dict] = []
+
+            while True:
+                params: Dict[str, object] = {"limit": page_size, "offset": offset}
+                if status is not None:
+                    # Qase API may accept status as an int code or string; keep original type but allow mixed types
+                    params["status"] = status
+
+                response = self._make_request(f"run/{self.project_code}", params)
+
+                if not response.get("status"):
+                    self.console.print("[red]Failed to fetch test runs[/red]")
+                    return []
+
+                page_runs = response.get("result", {}).get("entities", [])
+                if not page_runs:
+                    break
+
+                all_runs.extend(page_runs)
+                offset += len(page_runs)
+
+                if len(page_runs) < page_size:
+                    break
+
+                time.sleep(0.1)
+
+            self.console.print("[dim]Sorting test runs newest-first before filtering[/dim]")
+            all_runs = sorted(all_runs, key=self._run_sort_key, reverse=True)
+
+            runs = all_runs
+            original_count = len(runs)
+
+            # Apply tag filtering if specified
+            if tags:
+                runs = [run for run in runs if self._run_has_tags(run, tags)]
+                self.console.print(f"[dim]Tag filter: {original_count} → {len(runs)} runs (matched tags: {tags})[/dim]")
                 original_count = len(runs)
-                
-                # Apply tag filtering if specified
-                if tags:
-                    runs = [run for run in runs if self._run_has_tags(run, tags)]
-                    self.console.print(f"[dim]Tag filter: {original_count} → {len(runs)} runs (matched tags: {tags})[/dim]")
-                    original_count = len(runs)
-                elif exclude_tags:
-                    runs = [run for run in runs if not self._run_has_any_tag(run, exclude_tags)]
-                    self.console.print(f"[dim]Tag filter: {original_count} → {len(runs)} runs (excluded tags: {exclude_tags})[/dim]")
-                    original_count = len(runs)
-                
-                # Apply milestone filtering if specified
-                if milestones:
-                    runs = [run for run in runs if self._run_has_milestones(run, milestones)]
-                    self.console.print(f"[dim]Milestone filter: {original_count} → {len(runs)} runs (matched milestones: {milestones})[/dim]")
-                
-                self.console.print(f"[green]✓ Found {len(runs)} test runs[/green]")
-                return runs
-            else:
-                self.console.print("[red]Failed to fetch test runs[/red]")
-                return []
+            elif exclude_tags:
+                runs = [run for run in runs if not self._run_has_any_tag(run, exclude_tags)]
+                self.console.print(f"[dim]Tag filter: {original_count} → {len(runs)} runs (excluded tags: {exclude_tags})[/dim]")
+                original_count = len(runs)
+
+            # Apply milestone filtering if specified
+            if milestones:
+                runs = [run for run in runs if self._run_has_milestones(run, milestones)]
+                self.console.print(f"[dim]Milestone filter: {original_count} → {len(runs)} runs (matched milestones: {milestones})[/dim]")
+
+            if limit > 0 and len(runs) > limit:
+                runs = runs[:limit]
+
+            self.console.print(f"[green]✓ Found {len(runs)} test runs[/green]")
+            return runs
         except Exception as e:
             self.console.print(f"[red]Error fetching test runs: {e}[/red]")
             return []
@@ -212,15 +281,29 @@ class QaseReporter:
         self.console.print("[cyan]🎯 Fetching milestones...[/cyan]")
         
         try:
-            response = self._make_request(f"milestone/{self.project_code}", {"limit": 100})
-            
-            if response.get("status"):
-                milestones = response.get("result", {}).get("entities", [])
-                self.console.print(f"[green]✓ Found {len(milestones)} milestones[/green]")
-                return milestones
-            else:
-                self.console.print("[red]Failed to fetch milestones[/red]")
-                return []
+            page_size = 100
+            offset = 0
+            milestones: List[Dict] = []
+
+            while True:
+                response = self._make_request(f"milestone/{self.project_code}", {"limit": page_size, "offset": offset})
+
+                if not response.get("status"):
+                    self.console.print("[red]Failed to fetch milestones[/red]")
+                    return []
+
+                page_milestones = response.get("result", {}).get("entities", [])
+                if not page_milestones:
+                    break
+
+                milestones.extend(page_milestones)
+                offset += len(page_milestones)
+
+                if len(page_milestones) < page_size:
+                    break
+
+            self.console.print(f"[green]✓ Found {len(milestones)} milestones[/green]")
+            return milestones
         except Exception as e:
             self.console.print(f"[red]Error fetching milestones: {e}[/red]")
             return []
@@ -241,14 +324,10 @@ class QaseReporter:
             return False
         
         # Get milestone title
-        milestone_title = ''
-        if isinstance(run_milestone, dict):
-            milestone_title = run_milestone.get('title', '').lower()
-        else:
-            milestone_title = str(run_milestone).lower()
+        milestone_title = self._extract_milestone_title(run_milestone)
         
         # Check if milestone matches any required milestone
-        required_milestones_lower = [ms.lower() for ms in required_milestones]
+        required_milestones_lower = [self._normalize_text(ms) for ms in required_milestones]
         return milestone_title in required_milestones_lower
     
     def get_test_results_by_runs(self, run_ids: List[int], batch_size: int = 50) -> List[Dict]:
